@@ -1,0 +1,15 @@
+{
+  "name": "framework-arduinoteensy",
+  "version": "1.156.0",
+  "description": "Arduino Wiring-based Framework for Teensy boards",
+  "keywords": [
+    "framework",
+    "arduino",
+    "teensy"
+  ],
+  "homepage": "https://www.arduino.cc/reference/en",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PaulStoffregen/cores"
+  }
+}
