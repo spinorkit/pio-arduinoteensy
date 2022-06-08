@@ -1,6 +1,7 @@
 # pio-arduinoteensy
 PlatformIO framework-arduinoteensy package
-Repo to support development in PlatformIO of a custom Teensy Arduino core.
+Repo to support development in PlatformIO of a custom Teensy Arduino core based on https://github.com/PaulStoffregen/cores
+
 Example platformio.ini:
 
 [env:teensy41]
