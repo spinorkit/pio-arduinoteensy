@@ -18,6 +18,133 @@ volatile uint32_t F_BUS_ACTUAL = 132000000;
 
 
 uint32_t set_arm_clock(uint32_t frequency);
+uint32_t set_arm_clock_pll2(uint32_t frequency);
+
+/**
+ * @brief Set the arm clock pll2 object
+ * 
+ * @param frequency 
+ * @return uint32_t 
+ * 
+ *  1. if CCM_CBCMR PRE_PERIPH_CLK_SEL set to 00 derive clock from PLL2 and 
+ *    CCM_CBCDR PERIPH_CLK_SEL set to 0 derive clock from pre_periph_clk_sel and 
+ *    CCM_CSCMR1 PERCLK_CLK_SEL set to 0 derive clock from ipg clk root and 
+ *    CCM_CSCMR1 PERCLK_PODF set to 10 (device by 11) we are ok!
+ * 
+ *  2. if CCM_CBCMR PRE_PERIPH_CLK_SEL needs setting, need to use CBCDR PERIPH_CLK_SEL glitchless mux
+ *     and switch to 1 derive clock from periph_clk2_clk_divided before changing CCM_CBCMR PRE_PERIPH_CLK_SEL
+ *  
+ */
+
+uint32_t set_arm_clock_pll2_528()
+{
+   uint32_t frequency = 528000000;
+	uint32_t cbcdr = CCM_CBCDR; // pg 1021
+	uint32_t cbcmr = CCM_CBCMR; // pg 1023
+	uint32_t dcdc = DCDC_REG3;
+
+	// compute required voltage
+	uint32_t voltage = 1150; // default = 1.15V
+	if (frequency > 528000000) {
+		voltage = 1250; // 1.25V
+#if defined(OVERCLOCK_STEPSIZE) && defined(OVERCLOCK_MAX_VOLT)
+		if (frequency > 600000000) {
+			voltage += ((frequency - 600000000) / OVERCLOCK_STEPSIZE) * 25;
+			if (voltage > OVERCLOCK_MAX_VOLT) voltage = OVERCLOCK_MAX_VOLT;
+		}
+#endif
+	} else if (frequency <= 24000000) {
+		voltage = 950; // 0.95
+	}
+
+	// if voltage needs to increase, do it before switch clock speed
+	CCM_CCGR6 |= CCM_CCGR6_DCDC(CCM_CCGR_ON);
+	if ((dcdc & DCDC_REG3_TRG_MASK) < DCDC_REG3_TRG((voltage - 800) / 25)) {
+		printf("Increasing voltage to %u mV\n", voltage);
+		dcdc &= ~DCDC_REG3_TRG_MASK;
+		dcdc |= DCDC_REG3_TRG((voltage - 800) / 25);
+		DCDC_REG3 = dcdc;
+		while (!(DCDC_REG0 & DCDC_REG0_STS_DC_OK)) ; // wait voltage settling
+	}
+
+	if (!(cbcdr & CCM_CBCDR_PERIPH_CLK_SEL)) {
+      //Clock is connected to pre_periph_clk_sel
+		printf("need to switch to alternate clock during switch to PLL2\n");
+		const uint32_t need1s = CCM_ANALOG_PLL_USB1_ENABLE | CCM_ANALOG_PLL_USB1_POWER |
+			CCM_ANALOG_PLL_USB1_LOCK | CCM_ANALOG_PLL_USB1_EN_USB_CLKS;
+		uint32_t sel, div;
+		if ((CCM_ANALOG_PLL_USB1 & need1s) == need1s) {
+			printf("USB PLL is running, so we can use 120 MHz\n");
+			sel = 0;
+			div = 3; // divide down to 120 MHz, so IPG is ok even if IPG_PODF=0
+		} else {
+			printf("USB PLL is off, use 24 MHz crystal\n");
+			sel = 1;
+			div = 0;
+		}
+		if ((cbcdr & CCM_CBCDR_PERIPH_CLK2_PODF_MASK) != CCM_CBCDR_PERIPH_CLK2_PODF(div)) {
+			// PERIPH_CLK2 divider needs to be changed
+			cbcdr &= ~CCM_CBCDR_PERIPH_CLK2_PODF_MASK;
+			cbcdr |= CCM_CBCDR_PERIPH_CLK2_PODF(div);
+			CCM_CBCDR = cbcdr;
+		}
+		if ((cbcmr & CCM_CBCMR_PERIPH_CLK2_SEL_MASK) != CCM_CBCMR_PERIPH_CLK2_SEL(sel)) {
+			// PERIPH_CLK2 source select needs to be changed
+			cbcmr &= ~CCM_CBCMR_PERIPH_CLK2_SEL_MASK;
+			cbcmr |= CCM_CBCMR_PERIPH_CLK2_SEL(sel);
+			CCM_CBCMR = cbcmr;
+			while (CCM_CDHIPR & CCM_CDHIPR_PERIPH2_CLK_SEL_BUSY) ; // wait
+		}
+		// switch over to PERIPH_CLK2
+		cbcdr |= CCM_CBCDR_PERIPH_CLK_SEL;  //Glitchless mux
+		CCM_CBCDR = cbcdr;
+		while (CCM_CDHIPR & CCM_CDHIPR_PERIPH_CLK_SEL_BUSY) ; // wait
+	} else {
+		printf("already running from PERIPH_CLK2, safe to mess with ARM PLL\n");
+	}
+
+//CCM_CBCMR PRE_PERIPH_CLK_SEL set to 0: derive clock from PLL2
+   if( !(cbcmr & CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK))
+      {
+      printf("CCM_CBCMR &= ~CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK;   //use PLL2\n");
+      CCM_CBCMR &= ~CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK;   //use PLL2
+      }
+
+
+	uint32_t div_ipg = (frequency + 149999999) / 150000000;
+	if (div_ipg > 4) div_ipg = 4;
+	if ((cbcdr & CCM_CBCDR_IPG_PODF_MASK) != (CCM_CBCDR_IPG_PODF(div_ipg - 1))) {
+      printf("div_ipg = %d\n", div_ipg);
+		cbcdr &= ~CCM_CBCDR_IPG_PODF_MASK;
+		cbcdr |= CCM_CBCDR_IPG_PODF(div_ipg - 1);
+		// TODO: how to safely change IPG_PODF ??
+		CCM_CBCDR = cbcdr;
+	}
+
+   printf("CCM_CBCDR &= ~CCM_CBCDR_PERIPH_CLK_SEL\n");
+	//cbcdr &= ~CCM_CBCDR_PERIPH_CLK_SEL;
+	//CCM_CBCDR = cbcdr;  // why does this not work at 24 MHz?
+	CCM_CBCDR &= ~CCM_CBCDR_PERIPH_CLK_SEL;   //Glitchless mux
+	while (CCM_CDHIPR & CCM_CDHIPR_PERIPH_CLK_SEL_BUSY) ; // wait
+
+	F_CPU_ACTUAL = frequency;
+	F_BUS_ACTUAL = frequency / div_ipg;
+	scale_cpu_cycles_to_microseconds = 0xFFFFFFFFu / (uint32_t)(frequency / 1000000u);
+
+	printf("New Frequency: ARM=%u, IPG=%u\n", frequency, frequency / div_ipg);
+
+	// if voltage needs to decrease, do it after switch clock speed
+	if ((dcdc & DCDC_REG3_TRG_MASK) > DCDC_REG3_TRG((voltage - 800) / 25)) {
+		printf("Decreasing voltage to %u mV\n", voltage);
+		dcdc &= ~DCDC_REG3_TRG_MASK;
+		dcdc |= DCDC_REG3_TRG((voltage - 800) / 25);
+		DCDC_REG3 = dcdc;
+		while (!(DCDC_REG0 & DCDC_REG0_STS_DC_OK)) ; // wait voltage settling
+	}
+
+	return frequency;
+}
+
 
 
 // stuff needing wait handshake:
