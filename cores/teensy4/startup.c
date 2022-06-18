@@ -7,6 +7,10 @@
 
 #include "debug/printf.h"
 
+//Bug in imxrt.h
+#define CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED		((uint32_t)(1))
+
+
 // from the linker
 extern unsigned long _stextload;
 extern unsigned long _stext;
@@ -34,6 +38,7 @@ void configure_cache(void);
 void configure_external_ram(void);
 void unused_interrupt_vector(void);
 void usb_pll_start();
+void sys_pll_start();
 extern void analog_init(void); // analog.c
 extern void pwm_init(void); // pwm.c
 extern void tempmon_init(void);  //tempmon.c
@@ -97,7 +102,7 @@ void ResetHandler(void)
 	// Configure clocks
 	// TODO: make sure all affected peripherals are turned off!
 	// PIT & GPT timers to run from 24 MHz clock (independent of CPU speed)
-	CCM_CSCMR1 = (CCM_CSCMR1 & ~CCM_CSCMR1_PERCLK_PODF(0x3F)) | CCM_CSCMR1_PERCLK_CLK_SEL;
+	//CCM_CSCMR1 = (CCM_CSCMR1 & ~CCM_CSCMR1_PERCLK_PODF(0x3F)) | CCM_CSCMR1_PERCLK_CLK_SEL;
 	// UARTs run from 24 MHz clock (works if PLL3 off or bypassed)
 	CCM_CSCDR1 = (CCM_CSCDR1 & ~CCM_CSCDR1_UART_CLK_PODF(0x3F)) | CCM_CSCDR1_UART_CLK_SEL;
 
@@ -116,11 +121,16 @@ void ResetHandler(void)
 
 	configure_cache();
 	configure_systick();
-	usb_pll_start();	
+	usb_pll_start();
+
+   sys_pll_start();
+
 	reset_PFD(); //TODO: is this really needed?
-#ifdef F_CPU
-	set_arm_clock(F_CPU);
-#endif
+
+//#ifdef F_CPU
+//	set_arm_clock(F_CPU);
+//#endif
+   set_arm_clock_pll2_528();
 
 	// Undo PIT timer usage by ROM startup
 	CCM_CCGR1 |= CCM_CCGR1_PIT(CCM_CCGR_ON);
@@ -129,6 +139,12 @@ void ResetHandler(void)
 	PIT_TCTRL1 = 0;
 	PIT_TCTRL2 = 0;
 	PIT_TCTRL3 = 0;
+
+   // PIT & GPT timers to run from IPG clock (dependent on CPU speed) divided by 11 (528/11 = 12 MHz)
+   uint32_t cscmr1 = CCM_CSCMR1;
+   cscmr1 = ((cscmr1 & ~CCM_CSCMR1_PERCLK_PODF(0x3F)) | CCM_CSCMR1_PERCLK_PODF(10)) & ~CCM_CSCMR1_PERCLK_CLK_SEL;
+	CCM_CSCMR1 = cscmr1;
+
 
 	// initialize RTC
 	if (!(SNVS_LPCR & SNVS_LPCR_SRTC_ENV)) {
@@ -453,6 +469,48 @@ FLASHMEM void configure_external_ram()
 }
 
 #endif // ARDUINO_TEENSY41
+
+FLASHMEM void sys_pll_start()
+{
+while (1) 
+   {
+   uint32_t n = CCM_ANALOG_PLL_SYS;
+   printf("CCM_ANALOG_PLL_SYS=%08lX\n", n);
+   if (!(n & CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED)) 
+      {
+      printf("  ERROR, 480 MHz mode!\n"); 
+      CCM_ANALOG_PLL_SYS_CLR = 0xC000;			// bypass 24 MHz
+      CCM_ANALOG_PLL_SYS_SET = CCM_ANALOG_PLL_SYS_BYPASS | CCM_ANALOG_PLL_SYS_POWERDOWN | CCM_ANALOG_PLL_SYS_DIV_SELECT_FIXED;	// bypass, power down, use 528 MHz
+      CCM_ANALOG_PLL_SYS_CLR = CCM_ANALOG_PLL_SYS_ENABLE; 			// disable
+      continue;
+      }
+   if (!(n & CCM_ANALOG_PLL_SYS_ENABLE)) 
+      {
+      printf("  enable PLL\n");
+      // TODO: should this be done so early, or later??
+      CCM_ANALOG_PLL_SYS_SET = CCM_ANALOG_PLL_SYS_ENABLE;
+      continue;
+      }
+   if (n & CCM_ANALOG_PLL_SYS_POWERDOWN)
+      {
+      printf("  power up PLL\n");
+      CCM_ANALOG_PLL_SYS_CLR = CCM_ANALOG_PLL_SYS_POWERDOWN;
+      continue;
+      }
+   if (!(n & CCM_ANALOG_PLL_SYS_LOCK)) 
+      {
+      printf("  wait for lock\n");
+      continue;
+      }
+   if (n & CCM_ANALOG_PLL_SYS_BYPASS) 
+      {
+      printf("  turn off bypass\n");
+      CCM_ANALOG_PLL_SYS_CLR = CCM_ANALOG_PLL_SYS_BYPASS;
+      continue;
+      }
+   return;
+   }
+}
 
 
 FLASHMEM void usb_pll_start()
