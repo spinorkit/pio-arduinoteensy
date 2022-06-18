@@ -18,7 +18,7 @@ volatile uint32_t F_BUS_ACTUAL = 132000000;
 
 
 uint32_t set_arm_clock(uint32_t frequency);
-uint32_t set_arm_clock_pll2(uint32_t frequency);
+uint32_t set_arm_clock_pll2_528();
 
 /**
  * @brief Set the arm clock pll2 object

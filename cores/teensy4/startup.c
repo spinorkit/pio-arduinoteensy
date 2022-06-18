@@ -44,7 +44,10 @@ extern void pwm_init(void); // pwm.c
 extern void tempmon_init(void);  //tempmon.c
 extern float tempmonGetTemp(void);
 extern unsigned long rtc_get(void);
+
 uint32_t set_arm_clock(uint32_t frequency); // clockspeed.c
+uint32_t set_arm_clock_pll2_528();   // clockspeed.c
+
 extern void __libc_init_array(void); // C++ standard library
 
 uint8_t external_psram_size = 0;
