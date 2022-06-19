@@ -104,7 +104,7 @@ uint32_t set_arm_clock_pll2_528()
 	}
 
 //CCM_CBCMR PRE_PERIPH_CLK_SEL set to 0: derive clock from PLL2
-   if( !(cbcmr & CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK))
+   if( (cbcmr & CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK))
       {
       printf("CCM_CBCMR &= ~CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK;   //use PLL2\n");
       CCM_CBCMR &= ~CCM_CBCMR_PRE_PERIPH_CLK_SEL_MASK;   //use PLL2
